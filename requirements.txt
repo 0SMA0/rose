@@ -1,0 +1,31 @@
+# --- AI Orchestration ---
+langchain
+langchain-anthropic
+anthropic
+
+# --- Structured LLM Output ---
+pydantic==2.11.3
+
+# --- AST Parsing ---
+tree-sitter==0.24.0
+tree-sitter-java==0.23.5
+javalang==0.13.0
+
+# --- Knowledge Graph ---
+networkx==3.4.2
+
+# --- Docker Sandbox (Validation Engine) ---
+docker==7.1.0
+
+# --- Input Fuzzing & Testing ---
+hypothesis==6.131.5
+pytest==8.3.5
+pytest-cov==6.1.0
+
+# --- Code Quality & Maintainability Scoring ---
+radon==6.0.1
+
+# --- Utilities ---
+python-dotenv==1.1.0
+requests==2.32.3
+rich==13.9.4
