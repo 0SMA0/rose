@@ -7,8 +7,11 @@ parser = Parser(Language(ts_java.language()))
 # Code must be in bytes
 
 code = b"""
+import java.sql.DriverManager;
+import org.springframework.stereotype.Service;
+import com.example.internal.LegacyHelper;
 
-public class car {
+public class car extends Vehicle implements Runnable, Serializable {
 private int s;
 public final static String car = 'car';
 private int t = 1;
@@ -26,7 +29,7 @@ public static int add(int a, int b) {
 tree = parser.parse(code)
 root_node = tree.root_node
 
-print(f"Root tyoe: {root_node.type}") #Output: program
+# print(f"Root tyoe: {root_node.type}") #Output: program
 
 # Manual Transversal (this is used instead of s_experssion/sexxp)
 def print_tree(node, indent = 0):
@@ -35,7 +38,7 @@ def print_tree(node, indent = 0):
         print_tree(child, indent + 1)
     
 # Call the tree printer
-print_tree(root_node) #<--- shows the hierarchical structure
+# print_tree(root_node) #<--- shows the hierarchical structure
 
 # Recursive func to find all method nodes
 def find_all_methods_nodes(node):
@@ -138,5 +141,70 @@ def extract_field_value(field_node):
     return None
 
 # ****** FIELD END ****** #
-field_nodes = find_all_field_nodes(root_node)
-find_field_names(field_nodes)
+# field_nodes = find_all_field_nodes(root_node)
+# find_field_names(field_nodes)
+
+# ****** CLASS START ****** #
+
+CONTAINER_TYPES = {
+    'class_declaration': 'class',
+    'enum_declaration': 'enum',
+    'interface_declaration': 'interface'
+}
+
+def find_all_containers(node):
+    containers = []
+    if node.type in CONTAINER_TYPES:
+        containers.append(node)
+        return containers  # stop here — skip nested classes (Phase 2)
+    for child in node.children:
+        containers.extend(find_all_containers(child))
+    return containers
+
+def extract_class_name(container_node):
+    name_node = container_node.child_by_field_name('name')
+    if name_node:
+        return code[name_node.start_byte : name_node.end_byte].decode('utf-8')
+    return None
+
+def extract_superclass(class_node):
+    superclass_node = class_node.child_by_field_name('superclass')
+    if superclass_node:
+        text = code[superclass_node.start_byte : superclass_node.end_byte].decode('utf-8')
+        return text.replace('extends ', '').strip()
+    return None
+
+def extract_interfaces(class_node):
+    interfaces_node = class_node.child_by_field_name('interfaces')
+    if interfaces_node:
+        text = code[interfaces_node.start_byte : interfaces_node.end_byte].decode('utf-8')
+        text = text.replace('implements ', '').strip()
+        return [i.strip() for i in text.split(',')]
+    return []
+
+# ****** CLASS END ****** #
+
+
+# ****** IMPORTS START ****** #
+
+def categorize_import(statement):
+    path = statement.replace('import ', '').replace(';', '').strip()
+    if path.startswith(('java.', 'javax.')):
+        return 'standard_java'
+    return 'third_party'
+
+def extract_imports(root_node):
+    imports = []
+    for child in root_node.children:
+        if child.type == 'import_declaration':
+            statement = code[child.start_byte : child.end_byte].decode('utf-8').strip()
+            imports.append({
+                'statement': statement,
+                'category': categorize_import(statement)
+            })
+    return imports
+
+# ****** IMPORTS END ****** #
+
+# print(extract_imports(root_node))
+
