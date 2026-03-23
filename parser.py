@@ -7,11 +7,18 @@ parser = Parser(Language(ts_java.language()))
 # Code must be in bytes
 
 code = b"""
+
+public class car {
+private int s;
+public final static String car = 'car';
+private int t = 1;
+
 private void greet(String name) {
     System.out.println("Hello");
 }
 public static int add(int a, int b) {
     return a + b;
+}
 }
 """
 
@@ -49,19 +56,19 @@ def find_method_name(method_nodes):
     if method_nodes:
         print(f"\nFound {len(method_nodes)} methods(s):")
         for method_node in method_nodes:
-            print(extract_method_modifiers(method_node))
+            print(extract_return_type(method_node))
             names.append(extract_method_name(method_node))
     return names
 
-# TO GET METHOD SIGNATURE, USE NEEDED EXTRACTS 
-def extract_method_modifiers(method_node):
-    modifer_node = method_node.child_by_field_name('modifiers')
+# TO GET METHOD SIGNATURE, USE NEEDED EXTRACTS  
+def extract_modifiers(node): # <-- used by both methods and fields
+    modifer_node = node.child_by_field_name('modifiers')
     if modifer_node:
         modifer_text = code[modifer_node.start_byte : modifer_node.end_byte].decode('utf-8')
         return modifer_text #contains static and other modifiers
 
-def extract_return_type(method_node):
-    rt_node = method_node.child_by_field_name('type')
+def extract_return_type(node): # <-- used by both methods and fields
+    rt_node = node.child_by_field_name('type')
     if rt_node:
         rt_text = code[rt_node.start_byte : rt_node.end_byte].decode('utf-8')
         return rt_text
@@ -72,7 +79,7 @@ def extract_method_name(method_node):
         name_text = code[name_node.start_byte : name_node.end_byte].decode('utf-8')
         return name_text
     
-def extract_parameters(method_node):
+def extract_method_parameters(method_node):
     parameters_node = method_node.child_by_field_name('parameters')
     if parameters_node:
         params_text = code[parameters_node.start_byte : parameters_node.end_byte].decode('utf-8')
@@ -85,7 +92,51 @@ def extract_method_logic(method_node):
         return code[body_node.start_byte : body_node.end_byte].decode('utf-8')
     return None
 
+# method_nodes = find_all_methods_nodes(root_node)
+# find_method_name(method_nodes)
+
 # ****** METHOD END ****** # 
 
-method_nodes = find_all_methods_nodes(root_node)
-find_method_name(method_nodes)
+
+# ****** FIELD START ****** #
+    #NOTE To get modifiers and return type, use functions in Method area 
+
+def find_all_field_nodes(node):
+    fields = []
+    if node.type == 'field_declaration':
+        fields.append(node)
+    for child in node.children:
+        fields.extend(find_all_field_nodes(child))
+    return fields
+
+def find_field_names(field_nodes):
+    names = []
+    if field_nodes:
+        print(f"\nFound {len(field_nodes)} field(s):")
+        for field_node in field_nodes:
+            print(extract_field_value(field_node))
+            names.append(extract_field_name(field_node))
+    return names
+
+def extract_field_name(field_node):
+    var_dec= field_node.child_by_field_name('declarator')
+    if var_dec:
+        name_node = var_dec.child_by_field_name('name')
+        if name_node:
+            name_text = code[name_node.start_byte : name_node.end_byte].decode('utf-8')
+            return name_text
+    return None
+    
+def extract_field_value(field_node):
+    var_declarator = field_node.child_by_field_name('declarator')
+    if var_declarator:
+        for i, child in enumerate(var_declarator.children):
+            if child.type == '=' and i + 1 < len(var_declarator.children):
+                value_node = var_declarator.children[i + 1]
+                text = code[value_node.start_byte : value_node.end_byte].decode('utf-8')
+                return text
+    return None
+
+# ****** FIELD END ****** #
+field_nodes = find_all_field_nodes(root_node)
+find_field_names(field_nodes)
