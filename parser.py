@@ -182,6 +182,17 @@ def extract_interfaces(class_node):
         return [i.strip() for i in text.split(',')]
     return []
 
+def extract_nested_containers(container_node):
+    nested = []
+    body_node = container_node.child_by_field_name('body')
+    if body_node:
+        for child in body_node.children:
+            if child.type in CONTAINER_TYPES:
+                name_node = child.child_by_field_name('name')
+                if name_node:
+                    nested.append(code[name_node.start_byte : name_node.end_byte].decode('utf-8'))
+    return nested
+
 # ****** CLASS END ****** #
 
 
@@ -260,3 +271,4 @@ def detect_legacy_patterns(field_nodes, method_nodes, imports=None, client_confi
 #     field_nodes = find_all_field_nodes(c)
 #     method_nodes = find_all_methods_nodes(c)
 #     print(detect_legacy_patterns(field_nodes, method_nodes, imports))
+
