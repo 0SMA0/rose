@@ -208,3 +208,55 @@ def extract_imports(root_node):
 
 # print(extract_imports(root_node))
 
+
+# ****** LEGACY PATTERNS START ****** #
+
+JAVA_DEPRECATED = {
+    "raw_JDBC": ["DriverManager.getConnection", "java.sql.Connection", "java.sql.Statement", "java.sql.DriverManager"],
+    "deprecated_date_api": ["java.util.Date", "java.util.Calendar", "new Date()"],
+    "old_collections": ["java.util.Vector", "java.util.Hashtable", "java.util.Stack"],
+    "thread_unsafe": ["StringBuffer", "synchronized(this)"]
+}
+
+FRAMEWORK_PATTERNS = {
+    "ejb_annotations": ["@Stateless", "@Stateful", "@MessageDriven", "javax.ejb"],
+    "legacy_web_framework": ["org.apache.struts", "javax.servlet.http.HttpServlet"],
+    "spring_legacy": ["@Autowired on field"],
+    "hibernate_legacy": ["session.createSQLQuery", "HibernateUtil"]
+}
+
+def detect_legacy_patterns(field_nodes, method_nodes, imports=None, client_config=None):
+    detected = []
+    all_text = ""
+    for field in field_nodes:
+        value = extract_field_value(field)
+        if value:
+            all_text += value
+    for method in method_nodes:
+        body = extract_method_logic(method)
+        if body:
+            all_text += body
+    if imports:
+        for imp in imports:
+            all_text += imp['statement']
+
+    all_patterns = {**JAVA_DEPRECATED, **FRAMEWORK_PATTERNS}
+    if client_config:
+        all_patterns.update(client_config.get("client_legacy_patterns", {}))
+
+    for pattern_name, keywords in all_patterns.items():
+        for keyword in keywords:
+            if keyword in all_text:
+                detected.append(pattern_name)
+                break
+
+    return detected
+
+# ****** LEGACY PATTERNS END ****** #
+
+# containers = find_all_containers(root_node)
+# imports = extract_imports(root_node)
+# for c in containers:
+#     field_nodes = find_all_field_nodes(c)
+#     method_nodes = find_all_methods_nodes(c)
+#     print(detect_legacy_patterns(field_nodes, method_nodes, imports))
