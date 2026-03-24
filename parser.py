@@ -1,3 +1,5 @@
+import os
+import json
 from tree_sitter import Parser, Language
 import tree_sitter_java as ts_java
 
@@ -36,14 +38,39 @@ FRAMEWORK_PATTERNS = {
     "hibernate_legacy": ["session.createSQLQuery", "HibernateUtil"]
 }
 
+DOMAIN_KEYWORDS = {
+    "PaymentProcessing": [
+        "payment", "transaction", "invoice",
+        "billing", "charge", "refund", "checkout"
+    ],
+    "UserAuth": [
+        "auth", "login", "password", "token",
+        "session", "credential", "permission", "role"
+    ],
+    "DataAccess": [
+        "repository", "dao", "database", "query",
+        "jdbc", "hibernate", "persist", "entity"
+    ],
+    "Reporting": [
+        "report", "export", "summary", "aggregate",
+        "analytics", "metric", "dashboard"
+    ],
+    "Messaging": [
+        "queue", "topic", "kafka", "rabbitmq",
+        "event", "publish", "subscribe", "listener"
+    ]
+}
+
+# Module-level parser instance — built once, reused across all files
+_java_parser = Parser(Language(ts_java.language()))
+
 # ****** CONSTANTS END ****** #
 
 
 class JavaParser:
     def __init__(self, source: bytes):
-        _parser = Parser(Language(ts_java.language()))
         self.source = source
-        self.tree = _parser.parse(source)
+        self.tree = _java_parser.parse(source)
         self.root_node = self.tree.root_node
 
     def _text(self, node):
@@ -204,6 +231,97 @@ class JavaParser:
 
         return detected
 
+    # ****** COUPLING & RISK ****** #
+
+    def calculate_coupling_score(self, imports):
+        if not imports:
+            return 0.0
+        internal = sum(1 for i in imports if i['category'] == 'internal')
+        return round(internal / len(imports), 2)
+
+    def get_refactor_risk(self, coupling_score, legacy_patterns, methods, fields):
+        """
+        Calculates refactor risk from a weighted combination of four signals.
+
+        IMPORTANT: Thresholds (0.20, 0.45, 0.70) operate on a COMBINED score,
+        not raw coupling_score alone. The PRD documents coupling_score >= 0.75
+        as CRITICAL — that refers to raw coupling in isolation and is the
+        Phase 2 target once afferent coupling (Ca) is available from
+        parse_directory().
+
+        Phase 2 upgrade: add afferent_count parameter and swap in Martin's
+        Instability metric (Ce / Ca + Ce) as the base signal. Do not align
+        these thresholds with PRD thresholds until Ca is introduced.
+        """
+        coupling_component = coupling_score * 0.40
+        pattern_component = min(len(legacy_patterns) * 0.10, 0.30)
+        method_component = min(len(methods) * 0.02, 0.20)
+        field_component = min(len(fields) * 0.01, 0.10)
+        combined = coupling_component + pattern_component + method_component + field_component
+        if combined >= 0.70:
+            return "CRITICAL"
+        elif combined >= 0.45:
+            return "HIGH"
+        elif combined >= 0.20:
+            return "MEDIUM"
+        return "LOW"
+
+    # ****** BUSINESS DOMAIN ****** #
+
+    def infer_business_domain(self, class_name, method_nodes):
+        text = (class_name or "").lower()
+        for method in method_nodes:
+            name = self.extract_method_name(method)
+            if name:
+                text += " " + name.lower()
+        for domain, keywords in DOMAIN_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in text:
+                    return domain
+        return None
+
+    # ****** PARSE ****** #
+
+    def build_knowledge_graph_node(self, container, imports, source_path, client_config=None):
+        field_nodes = self.find_all_field_nodes(container)
+        method_nodes = self.find_all_methods_nodes(container)
+        legacy_patterns = self.detect_legacy_patterns(field_nodes, method_nodes, imports, client_config)
+        coupling_score = self.calculate_coupling_score(imports)
+
+        return {
+            "class": self.extract_class_name(container),
+            "type": CONTAINER_TYPES[container.type],
+            "source_path": source_path,
+            "scrubbed_path": None,
+            "superclass": self.extract_superclass(container),
+            "interfaces": self.extract_interfaces(container),
+            "nested_classes": self.extract_nested_containers(container),
+            "methods": [
+                {
+                    "name": self.extract_method_name(m),
+                    "return_type": self.extract_return_type(m),
+                    "modifiers": self.extract_modifiers(m),
+                    "parameters": self.extract_method_parameters(m),
+                    "body": self.extract_method_logic(m),
+                }
+                for m in method_nodes
+            ],
+            "fields": [
+                {
+                    "name": self.extract_field_name(f),
+                    "type": self.extract_return_type(f),
+                    "modifiers": self.extract_modifiers(f),
+                    "value": self.extract_field_value(f),
+                }
+                for f in field_nodes
+            ],
+            "imports": imports,
+            "legacy_patterns": legacy_patterns,
+            "coupling_score": coupling_score,
+            "refactor_risk": self.get_refactor_risk(coupling_score, legacy_patterns, method_nodes, field_nodes),
+            "business_domain": self.infer_business_domain(self.extract_class_name(container), method_nodes),
+        }
+
 
 # ****** MODULE-LEVEL HELPERS (no source dependency) ****** #
 
@@ -217,8 +335,42 @@ def categorize_import(statement, internal_package_prefix=None):
         return 'internal'
     return 'third_party'
 
+
+def parse_file(filepath, client_config=None):
+    try:
+        with open(filepath, 'rb') as f:
+            source = f.read()
+    except (OSError, IOError) as e:
+        print(f"[WARN] Could not read {filepath}: {e}")
+        return []
+    p = JavaParser(source)
+    imports = p.extract_imports(client_config.get('internal_package_prefix') if client_config else None)
+    containers = p.find_all_containers(p.root_node)
+    return [p.build_knowledge_graph_node(c, imports, str(filepath), client_config) for c in containers]
+
+
+def parse_directory(directory, client_config=None):
+    output_dir = "output/knowledge_graph"
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.java'):
+                filepath = os.path.join(root, file)
+                try:
+                    nodes = parse_file(filepath, client_config)
+                    for node in nodes:
+                        out_path = os.path.join(output_dir, f"{node['class']}.json")
+                        with open(out_path, 'w') as f:
+                            json.dump(node, f, indent=2)
+                    results.extend(nodes)
+                except Exception as e:
+                    print(f"[WARN] Skipping {filepath}: {e}")
+    return results
+
+
 def main():
-    pass
+    print(parse_file('Test.java'))
 
 if __name__ == '__main__':
     main()
